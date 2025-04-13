@@ -43,13 +43,18 @@ The project is currently in active development with the following core features 
 - [x] Implement a metacommand to reset the context
 - [ ] Implement a metacommand to remove a file from the vector db (e.g., /remove 1)
 
+## Completed Milestones
+
+- [x] Centralized hyperparameters for easy configuration and optimization
+- [x] Consolidated inject and build functionality for systematic knowledge base construction
+- [x] Added structured knowledge base with subdirectories for different domains
+
 ## Technical Debt & Improvements
 
 - [ ] Comprehensive test suite with unit and integration tests
 - [ ] Better error handling and reporting
 - [ ] Documentation improvements
 - [ ] Code refactoring for maintainability
-- [ ] Configuration management via config files
 - [ ] Proper logging system
 - [ ] Containerization with Docker
 - [ ] Web UI interface for easier interaction

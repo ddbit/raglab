@@ -5,18 +5,22 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from rag import RAGSystem
+import hyperparams
 
 DEFAULT_CONTEXT_FILE = os.path.expanduser("~/.context")
 
 class RAGTerminal:
     def __init__(
         self,
-        collection_name: str = "my_documents",
-        model_name: str = "phi3",
-        engine: str = "ollama",
+        collection_name: str = hyperparams.DEFAULT_COLLECTION_NAME,
+        model_name: str = hyperparams.DEFAULT_MODEL_NAME,
+        engine: str = hyperparams.DEFAULT_ENGINE,
         api_key: Optional[str] = None,
         context_file: str = DEFAULT_CONTEXT_FILE,
-        max_history: int = 10
+        max_history: int = 10,
+        temperature: float = hyperparams.DEFAULT_TEMPERATURE,
+        top_k: int = hyperparams.TOP_K,
+        retriever_type: str = hyperparams.RETRIEVER_TYPE
     ):
         """Initialize the RAG terminal app"""
         
@@ -24,8 +28,12 @@ class RAGTerminal:
             collection_name=collection_name,
             model_name=model_name,
             engine=engine,
-            api_key=api_key
+            api_key=api_key,
+            temperature=temperature
         )
+        
+        self.top_k = top_k
+        self.retriever_type = retriever_type
         
         self.context_file = context_file
         self.max_history = max_history
@@ -119,47 +127,25 @@ class RAGTerminal:
                 return False
                 
             try:
-                # Handle different file types
-                if path.lower().endswith('.pdf'):
-                    from ingest import read_pdf_files
-                    docs = read_pdf_files(os.path.dirname(path))
-                    # Filter to only get the specific file
-                    docs = [d for d in docs if os.path.basename(path) in d[1].get('source', '')]
-                    
-                elif path.lower().endswith('.txt'):
-                    with open(path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    metadata = {"source": path, "filename": os.path.basename(path), "filetype": "text"}
-                    docs = [(content, metadata)]
-                    
-                else:
-                    print(f"Error: Unsupported file type. Only PDF and TXT files are supported.")
-                    return False
+                # Use the process_single_file function from build.py
+                from build import process_single_file
                 
-                if not docs:
-                    print(f"Error: No content extracted from file.")
-                    return False
+                # Process the file directly
+                chunk_size = args.chunk_size if hasattr(args, 'chunk_size') else hyperparams.CHUNK_SIZE
+                chunk_overlap = args.chunk_overlap if hasattr(args, 'chunk_overlap') else hyperparams.CHUNK_OVERLAP
                 
-                # Process chunks with the default RAG chunking
-                from ingest import chunk_document
-                
-                total_chunks = 0
-                for doc_text, doc_metadata in docs:
-                    # Split into chunks
-                    chunks = chunk_document(doc_text, doc_metadata)
-                    
-                    # Extract texts and metadatas
-                    texts = [chunk for chunk, _ in chunks]
-                    metadatas = [metadata for _, metadata in chunks]
-                    
-                    # Add to index
-                    added = self.rag.add_documents(texts, metadatas)
-                    total_chunks += added
+                total_chunks = process_single_file(
+                    file_path=path,
+                    rag_system=self.rag,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap
+                )
                 
                 print(f"Successfully injected file '{os.path.basename(path)}' with {total_chunks} chunks.")
                 
             except Exception as e:
                 print(f"Error injecting file: {str(e)}")
+                
                 
         elif cmd == "/help":
             print("\nAvailable commands:")
@@ -408,7 +394,11 @@ class RAGTerminal:
             enhanced_query = user_input
         
         # Get response from RAG system
-        result = self.rag.query(enhanced_query)
+        result = self.rag.query(
+            enhanced_query, 
+            similarity_top_k=self.top_k,
+            retriever_type=self.retriever_type
+        )
         
         # Store the exchange in history
         self.conversation_history.append({"role": "user", "content": user_input})
@@ -428,11 +418,11 @@ class RAGTerminal:
         
         print("\n===== RAG Terminal =====")
         print("Type your questions or use special commands:")
-        print("  /inject <path> - Inject a file into the vector database")
         print("  /list         - List all documents in the vector database")
         print("  /model        - Show current model information")
         print("  /models       - List available models in Ollama")
         print("  /switch <model> - Switch to a different model")
+        print("  /inject <path> - Inject a file into the vector database")
         print("  /clear        - Clear conversation history")
         print("  /reset        - Reset conversation context")
         print("  /bye          - Exit the program")
@@ -481,12 +471,15 @@ def query_once():
     """Original query function for backward compatibility"""
     parser = argparse.ArgumentParser(description="Query the RAG system")
     parser.add_argument("--query", type=str, required=True, help="Question to ask")
-    parser.add_argument("--model", type=str, default="phi3", help="Model name to use")
-    parser.add_argument("--engine", type=str, default="ollama", choices=["ollama", "openai"],
+    parser.add_argument("--model", type=str, default=hyperparams.DEFAULT_MODEL_NAME, help="Model name to use")
+    parser.add_argument("--engine", type=str, default=hyperparams.DEFAULT_ENGINE, choices=["ollama", "openai"],
                        help="LLM engine to use (ollama or openai)")
     parser.add_argument("--api-key", type=str, help="API key for OpenAI (if using OpenAI engine)")
-    parser.add_argument("--collection", type=str, default="my_documents", help="ChromaDB collection name")
-    parser.add_argument("--top-k", type=int, default=3, help="Number of documents to retrieve")
+    parser.add_argument("--collection", type=str, default=hyperparams.DEFAULT_COLLECTION_NAME, help="ChromaDB collection name")
+    parser.add_argument("--top-k", type=int, default=hyperparams.TOP_K, help="Number of documents to retrieve")
+    parser.add_argument("--temperature", type=float, default=hyperparams.DEFAULT_TEMPERATURE, help="Temperature for generation")
+    parser.add_argument("--retriever", type=str, default=hyperparams.RETRIEVER_TYPE, 
+                       choices=["default", "sparse", "dense", "hybrid"], help="Type of retriever to use")
     parser.add_argument("--json", action="store_true", help="Output in JSON format")
     args = parser.parse_args()
     
@@ -495,11 +488,16 @@ def query_once():
         collection_name=args.collection,
         model_name=args.model,
         engine=args.engine,
-        api_key=args.api_key
+        api_key=args.api_key,
+        temperature=args.temperature
     )
     
     # Query the system
-    result = rag.query(args.query, similarity_top_k=args.top_k)
+    result = rag.query(
+        args.query, 
+        similarity_top_k=args.top_k,
+        retriever_type=args.retriever
+    )
     
     # Output the results
     if args.json:
@@ -518,17 +516,27 @@ def main():
     parser = argparse.ArgumentParser(description="RAG Terminal or Query Tool")
     parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive terminal mode")
     parser.add_argument("--query", "-q", type=str, help="Question to ask (non-interactive mode)")
-    parser.add_argument("--model", type=str, default="phi3", help="Model name to use")
-    parser.add_argument("--engine", type=str, default="ollama", choices=["ollama", "openai"],
+    parser.add_argument("--model", type=str, default=hyperparams.DEFAULT_MODEL_NAME, help="Model name to use")
+    parser.add_argument("--engine", type=str, default=hyperparams.DEFAULT_ENGINE, choices=["ollama", "openai"],
                        help="LLM engine to use (ollama or openai)")
     parser.add_argument("--api-key", type=str, help="API key for OpenAI (if using OpenAI engine)")
-    parser.add_argument("--collection", type=str, default="my_documents", help="ChromaDB collection name")
+    parser.add_argument("--collection", type=str, default=hyperparams.DEFAULT_COLLECTION_NAME, help="ChromaDB collection name")
     parser.add_argument("--context-file", type=str, default=DEFAULT_CONTEXT_FILE, 
                        help="File to store conversation context")
     parser.add_argument("--max-history", type=int, default=5, 
                        help="Maximum number of message pairs to keep in history")
-    parser.add_argument("--top-k", type=int, default=3, 
-                       help="Number of documents to retrieve (non-interactive mode)")
+    parser.add_argument("--top-k", type=int, default=hyperparams.TOP_K, 
+                       help="Number of documents to retrieve")
+    parser.add_argument("--temperature", type=float, default=hyperparams.DEFAULT_TEMPERATURE, 
+                       help="Temperature for generation (0.0 to 1.0)")
+    parser.add_argument("--retriever", type=str, default=hyperparams.RETRIEVER_TYPE, 
+                       choices=["default", "sparse", "dense", "hybrid"], help="Type of retriever to use")
+    parser.add_argument("--knowledge-dir", type=str, default=hyperparams.KNOWLEDGE_BASE_DIR,
+                       help="Directory containing knowledge base files")
+    parser.add_argument("--chunk-size", type=int, default=hyperparams.CHUNK_SIZE, 
+                       help="Size of document chunks (for injection)")
+    parser.add_argument("--chunk-overlap", type=int, default=hyperparams.CHUNK_OVERLAP, 
+                       help="Overlap between chunks (for injection)")
     parser.add_argument("--json", action="store_true", 
                        help="Output in JSON format (non-interactive mode)")
     
@@ -549,8 +557,12 @@ def main():
                 sys.argv.append(f"--api-key={args.api_key}")
             if args.collection != "my_documents":
                 sys.argv.append(f"--collection={args.collection}")
-            if args.top_k != 3:
+            if args.top_k != hyperparams.TOP_K:
                 sys.argv.append(f"--top-k={args.top_k}")
+            if args.temperature != hyperparams.DEFAULT_TEMPERATURE:
+                sys.argv.append(f"--temperature={args.temperature}")
+            if args.retriever != hyperparams.RETRIEVER_TYPE:
+                sys.argv.append(f"--retriever={args.retriever}")
             if args.json:
                 sys.argv.append("--json")
             
@@ -566,7 +578,10 @@ def main():
             engine=args.engine,
             api_key=args.api_key,
             context_file=args.context_file,
-            max_history=args.max_history
+            max_history=args.max_history,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            retriever_type=args.retriever
         )
         
         terminal.run()
