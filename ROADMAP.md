@@ -32,6 +32,7 @@ The project is currently in active development with the following core features 
 - [x] Command to switch models (/switch)
 - [x] Command to reset conversation context (/reset)
 - [x] Basic test framework
+- [x] Script to reset vector database
 
 ## Future requirements
 

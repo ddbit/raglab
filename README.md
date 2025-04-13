@@ -119,6 +119,17 @@ result = rag.query("Your question here?")
 print(result["answer"])
 ```
 
+### Resetting the Vector Database
+
+If you need to clear all documents from the vector database:
+
+```bash
+python src/reset_db.py --collection my_documents
+
+# To skip confirmation prompt:
+python src/reset_db.py --collection my_documents --force
+```
+
 ## Directory Structure
 
 - `src/`: Source code
@@ -126,6 +137,8 @@ print(result["answer"])
   - `ingest.py`: Document ingestion script
   - `rag.py`: Core RAG system implementation
   - `query.py`: Query handling logic
+  - `reset_db.py`: Script to reset the vector database
+  - `test_rag.py`: Test script for the RAG system
 - `data/pdfs/`: Directory for storing PDF documents to be ingested
 - `chroma_db/`: Default location for the ChromaDB vector database
 
